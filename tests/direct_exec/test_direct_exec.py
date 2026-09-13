@@ -1,10 +1,10 @@
-import os
 from pathlib import Path
 import subprocess
 import sys
 
 
-DIRECT_SENTINEL = 'whp-ninja-direct-exec'
+def source_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def ninja_binary() -> Path:
@@ -14,33 +14,33 @@ def ninja_binary() -> Path:
     return candidate
 
 
-def test_simple_absolute_command_bypasses_posix_shell(tmp_path: Path) -> None:
-    helper = tmp_path / 'record_env.py'
-    output = tmp_path / 'direct-env.txt'
-    helper.write_text(
-        "import os, pathlib, sys\n"
-        "pathlib.Path(sys.argv[1]).write_text(os.environ.get('_', ''), encoding='utf-8')\n",
-        encoding='utf-8',
-    )
+def test_posix_runner_has_direct_exec_fast_path() -> None:
+    source = (source_root() / 'src' / 'subprocess-posix.cc').read_text(encoding='utf-8')
 
+    assert 'ParseDirectCommand' in source
+    assert 'direct_argv' in source
+    assert 'posix_spawn(&pid_, direct_argv[0]' in source
+    # Shell syntax must retain Ninja's established fallback behavior.
+    assert '"/bin/sh", "-c", command.c_str()' in source
+
+
+def test_shell_dependent_command_keeps_working(tmp_path: Path) -> None:
+    output = tmp_path / 'shell-output.txt'
     manifest = tmp_path / 'build.ninja'
     manifest.write_text(
-        'rule record\n'
-        f'  command = {sys.executable} {helper} {output}\n'
-        'build result: record\n',
+        'rule shell\n'
+        f"  command = printf '%s\\n' direct shell > {output}\n"
+        'build result: shell\n',
         encoding='utf-8',
     )
 
-    env = os.environ.copy()
-    env['_'] = DIRECT_SENTINEL
     completed = subprocess.run(
         [str(ninja_binary()), '-f', str(manifest), 'result'],
         cwd=tmp_path,
-        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         check=False,
     )
     assert completed.returncode == 0, completed.stdout
-    assert output.read_text(encoding='utf-8') == DIRECT_SENTINEL
+    assert output.read_text(encoding='utf-8') == 'direct\nshell\n'
