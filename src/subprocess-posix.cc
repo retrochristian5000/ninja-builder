@@ -39,6 +39,109 @@ using namespace std;
 
 namespace {
   ExitStatus ParseExitStatus(int status);
+
+bool ParseDirectCommand(const string& command, vector<string>* args) {
+  enum QuoteState {
+    kUnquoted,
+    kSingleQuoted,
+    kDoubleQuoted,
+  };
+
+  QuoteState state = kUnquoted;
+  string arg;
+  bool have_arg = false;
+
+  args->clear();
+  for (size_t i = 0; i < command.size(); ++i) {
+    const char ch = command[i];
+
+    /* Never reinterpret multi-line shell input as a direct argv command. */
+    if (ch == '\n' || ch == '\r')
+      return false;
+
+    if (state == kSingleQuoted) {
+      if (ch == '\'') {
+        state = kUnquoted;
+      } else {
+        arg += ch;
+      }
+      continue;
+    }
+
+    if (state == kDoubleQuoted) {
+      if (ch == '"') {
+        state = kUnquoted;
+        continue;
+      }
+      if (ch == '$' || ch == '`')
+        return false;
+      if (ch == '\\') {
+        if (++i >= command.size())
+          return false;
+        const char next = command[i];
+        if (next != '"' && next != '\\')
+          return false;
+        arg += next;
+        continue;
+      }
+      arg += ch;
+      continue;
+    }
+
+    if (ch == ' ' || ch == '\t') {
+      if (have_arg) {
+        args->push_back(arg);
+        arg.clear();
+        have_arg = false;
+      }
+      continue;
+    }
+
+    if (ch == '\'') {
+      state = kSingleQuoted;
+      have_arg = true;
+      continue;
+    }
+    if (ch == '"') {
+      state = kDoubleQuoted;
+      have_arg = true;
+      continue;
+    }
+    if (ch == '\\') {
+      if (++i >= command.size())
+        return false;
+      const char next = command[i];
+      if (next == '\n' || next == '\r')
+        return false;
+      arg += next;
+      have_arg = true;
+      continue;
+    }
+
+    /*
+     * These characters can invoke shell control flow, expansion, globbing,
+     * redirection, comments, or tilde expansion. Keep the established shell
+     * path whenever any of them is unquoted.
+     */
+    if (strchr("$`|&;<>*?[]{}()~#", ch) != NULL)
+      return false;
+
+    arg += ch;
+    have_arg = true;
+  }
+
+  if (state != kUnquoted)
+    return false;
+  if (have_arg)
+    args->push_back(arg);
+
+  /*
+   * Restrict the fast path to an explicit executable path. This avoids
+   * changing PATH lookup, shell built-in, command-not-found, or leading
+   * environment-assignment semantics.
+   */
+  return !args->empty() && !(*args)[0].empty() && (*args)[0][0] == '/';
+}
 }
 
 Subprocess::Subprocess(bool use_console) : fd_(-1), pid_(-1),
@@ -129,9 +232,24 @@ bool Subprocess::Start(SubprocessSet* set, const string& command) {
   if (err != 0)
     Fatal("posix_spawnattr_setflags: %s", strerror(err));
 
-  const char* spawned_args[] = { "/bin/sh", "-c", command.c_str(), NULL };
-  err = posix_spawn(&pid_, "/bin/sh", &action, &attr,
-        const_cast<char**>(spawned_args), environ);
+  vector<string> direct_args;
+  vector<char*> direct_argv;
+  if (ParseDirectCommand(command, &direct_args)) {
+    direct_argv.reserve(direct_args.size() + 1);
+    for (string& arg : direct_args)
+      direct_argv.push_back(&arg[0]);
+    direct_argv.push_back(NULL);
+    err = posix_spawn(&pid_, direct_argv[0], &action, &attr,
+                      direct_argv.data(), environ);
+  } else {
+    err = ENOTSUP;
+  }
+
+  if (err != 0) {
+    const char* spawned_args[] = { "/bin/sh", "-c", command.c_str(), NULL };
+    err = posix_spawn(&pid_, "/bin/sh", &action, &attr,
+          const_cast<char**>(spawned_args), environ);
+  }
   if (err != 0)
     Fatal("posix_spawn: %s", strerror(err));
 
