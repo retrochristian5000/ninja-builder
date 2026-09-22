@@ -8,6 +8,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   fedora:
     runs-on: [ubuntu-latest]
@@ -41,6 +44,8 @@ jobs:
           ../../misc/jobserver_test.py
 
   build:
+    permissions:
+      contents: write
     strategy:
       matrix:
         host-os: ["ubuntu-latest", "ubuntu-24.04-arm"]
