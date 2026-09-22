@@ -28,6 +28,7 @@ except ImportError:
     import SocketServer as socketserver  # type: ignore # Name "socketserver" already defined
 import argparse
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -157,7 +158,14 @@ def generate_html(node: Node) -> str:
 
     return '\n'.join(document)
 
+def is_safe_target(target: str) -> bool:
+    # Allow typical Ninja target/path characters and disallow control/option-like input.
+    # This blocks unexpected command argument abuse while preserving normal target names.
+    return bool(re.fullmatch(r'[A-Za-z0-9_./:@+=,\-]+', target))
+
 def ninja_dump(target: str) -> Tuple[str, str, int]:
+    if not is_safe_target(target):
+        raise ValueError('Invalid target')
     cmd = [args.ninja_command, '-f', args.f, '-t', 'query', target]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True)
@@ -180,12 +188,16 @@ class RequestHandler(httpserver.BaseHTTPRequestHandler):
             return
         target = target[1:]
 
-        ninja_output, ninja_error, exit_code = ninja_dump(target)
-        if exit_code == 0:
-            page_body = generate_html(parse(ninja_output.strip()))
+        try:
+            ninja_output, ninja_error, exit_code = ninja_dump(target)
+        except ValueError:
+            page_body = '<h1><tt>%s</tt></h1>' % html_escape('Invalid target')
         else:
-            # Relay ninja's error message.
-            page_body = '<h1><tt>%s</tt></h1>' % html_escape(ninja_error)
+            if exit_code == 0:
+                page_body = generate_html(parse(ninja_output.strip()))
+            else:
+                # Relay ninja's error message.
+                page_body = '<h1><tt>%s</tt></h1>' % html_escape(ninja_error)
 
         self.send_response(200)
         self.end_headers()
