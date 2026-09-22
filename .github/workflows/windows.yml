@@ -8,6 +8,12 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+  actions: read
+  checks: read
+  packages: read
+
 jobs:
   build:
     runs-on: windows-latest
