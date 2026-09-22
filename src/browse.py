@@ -159,8 +159,16 @@ def generate_html(node: Node) -> str:
     return '\n'.join(document)
 
 def is_safe_target(target: str) -> bool:
-    # Allow typical Ninja target/path characters and disallow control/option-like input.
-    # This blocks unexpected command argument abuse while preserving normal target names.
+    # Allow typical Ninja target/path characters, but reject option-like and traversal input.
+    # This prevents untrusted targets from being interpreted as command options or unsafe paths.
+    if not target:
+        return False
+    if target.startswith('-'):
+        return False
+    if target.startswith('/'):
+        return False
+    if '..' in target:
+        return False
     return bool(re.fullmatch(r'[A-Za-z0-9_./:@+=,\-]+', target))
 
 def ninja_dump(target: str) -> Tuple[str, str, int]:
