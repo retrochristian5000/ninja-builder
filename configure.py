@@ -208,6 +208,9 @@ parser = OptionParser()
 profilers = ['gmon', 'pprof']
 parser.add_option('--bootstrap', action='store_true',
                   help='bootstrap a ninja binary from nothing')
+parser.add_option('--bootstrap-jobs', type='int', default=2, metavar='N',
+                  help='maximum concurrent jobs for the final bootstrap '
+                       'self-rebuild (default: 2)')
 parser.add_option('--verbose', action='store_true',
                   help='enable verbose build')
 parser.add_option('--platform',
@@ -236,6 +239,8 @@ parser.add_option('--force-pselect', action='store_true',
                   help='ppoll() is used by default where available, '
                        'but some platforms may need to use pselect instead',)
 (options, args) = parser.parse_args()
+if options.bootstrap_jobs < 1:
+    parser.error('--bootstrap-jobs must be a positive integer')
 if args:
     print('ERROR: extra unparsed command-line arguments:', args)
     sys.exit(1)
@@ -809,4 +814,9 @@ if options.bootstrap:
     if options.verbose:
         rebuild_args.append('-v')
 
+    # The first-stage bootstrap runs commands serially, but the final
+    # self-rebuild invokes Ninja's parallel scheduler.  Do not let a high
+    # logical CPU count accidentally launch enough compiler jobs to exhaust
+    # memory while creating the binary the rest of the build depends on.
+    rebuild_args.extend(['-j', str(options.bootstrap_jobs)])
     subprocess.check_call(rebuild_args)

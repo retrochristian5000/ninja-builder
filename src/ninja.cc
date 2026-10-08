@@ -254,15 +254,36 @@ void Usage(const BuildConfig& config) {
 
 /// Choose a default value for the -j (parallelism) flag.
 int GuessParallelism() {
+  int jobs;
   switch (int processors = GetProcessorCount()) {
   case 0:
   case 1:
-    return 2;
+    jobs = 2;
+    break;
   case 2:
-    return 3;
+    jobs = 3;
+    break;
   default:
-    return processors + 2;
+    // Avoid signed overflow on hosts reporting unusually large CPU counts.
+    jobs = processors > INT_MAX - 2 ? INT_MAX : processors + 2;
+    break;
   }
+
+  // Host bootstrap consumers may provide a memory-safe upper bound for
+  // *automatic* concurrency.  Keep explicit -j, including -j0, authoritative
+  // and leave all builds unchanged when this opt-in policy is absent.
+  const char* max_jobs = getenv("NINJA_AUTO_JOBS");
+  if (max_jobs && *max_jobs) {
+    errno = 0;
+    char* end;
+    long limit = strtol(max_jobs, &end, 10);
+    if (errno == ERANGE || end == max_jobs || *end != '\0' ||
+        limit <= 0 || limit > INT_MAX) {
+      Fatal("invalid NINJA_AUTO_JOBS: expected a positive integer");
+    }
+    jobs = std::min(jobs, static_cast<int>(limit));
+  }
+  return jobs;
 }
 
 /// Rebuild the build manifest, if necessary.
