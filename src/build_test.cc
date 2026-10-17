@@ -517,6 +517,85 @@ TEST_F(PlanTest, PriorityWithoutBuildLog) {
   EXPECT_FALSE(plan_.FindWork());
 }
 
+// Preserve the caller's environment because gtests share one process.
+class ScopedCriticalPathTimes {
+ public:
+  explicit ScopedCriticalPathTimes(const char* value) {
+    const char* old = getenv("NINJA_CRITICAL_PATH_TIMES");
+    had_value_ = old != NULL;
+    if (old)
+      previous_ = old;
+    Set(value);
+  }
+
+  ~ScopedCriticalPathTimes() {
+    Set(had_value_ ? previous_.c_str() : "");
+  }
+
+ private:
+  static void Set(const char* value) {
+#ifdef _WIN32
+    _putenv_s("NINJA_CRITICAL_PATH_TIMES", value);
+#else
+    if (*value)
+      setenv("NINJA_CRITICAL_PATH_TIMES", value, 1);
+    else
+      unsetenv("NINJA_CRITICAL_PATH_TIMES");
+#endif
+  }
+
+  bool had_value_;
+  std::string previous_;
+};
+
+TEST_F(PlanTest, HistoricalCriticalPathPrioritizesLongCommands) {
+  ScopedCriticalPathTimes timed("1");
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+    "rule r\n"
+    "  command = unused\n"
+    "build out: r fast slow\n"
+    "build fast: r in\n"
+    "build slow: r in\n"
+  ));
+  GetNode("fast")->MarkDirty();
+  GetNode("slow")->MarkDirty();
+  GetNode("out")->MarkDirty();
+
+  GetNode("fast")->in_edge()->prev_elapsed_time_millis = 50;
+  GetNode("slow")->in_edge()->prev_elapsed_time_millis = 5000;
+  GetNode("out")->in_edge()->prev_elapsed_time_millis = 10;
+  PrepareForTarget("out");
+
+  EXPECT_EQ(60, GetNode("fast")->in_edge()->critical_path_weight());
+  EXPECT_EQ(5010, GetNode("slow")->in_edge()->critical_path_weight());
+  Edge* first = plan_.FindWork();
+  ASSERT_TRUE(first);
+  EXPECT_EQ("slow", first->outputs_[0]->path());
+}
+
+TEST_F(PlanTest, HistoricalCriticalPathKeepsDefaultAndCapsBadLogs) {
+  {
+    ScopedCriticalPathTimes timed("0");
+    ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+      "rule r\n"
+      "  command = unused\n"
+      "build out: r slow\n"
+      "build slow: r in\n"
+    ));
+    GetNode("slow")->MarkDirty();
+    GetNode("out")->MarkDirty();
+    GetNode("slow")->in_edge()->prev_elapsed_time_millis = INT64_MAX;
+    PrepareForTarget("out");
+    EXPECT_EQ(2, GetNode("slow")->in_edge()->critical_path_weight());
+  }
+  plan_.Reset();
+  {
+    ScopedCriticalPathTimes timed("1");
+    PrepareForTarget("out");
+    EXPECT_EQ(3600001, GetNode("slow")->in_edge()->critical_path_weight());
+  }
+}
+
 /// Fake implementation of CommandRunner, useful for tests.
 struct FakeCommandRunner : public CommandRunner {
   explicit FakeCommandRunner(VirtualFileSystem* fs) :
