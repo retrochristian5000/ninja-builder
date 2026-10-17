@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <functional>
 #include <unordered_set>
@@ -468,10 +469,15 @@ void Plan::UnmarkDependents(const Node* node, set<Node*>* dependents) {
 
 namespace {
 
-// Heuristic for edge priority weighting.
-// Phony edges are free (0 cost), all other edges are weighted equally.
-int64_t EdgeWeightHeuristic(Edge *edge) {
-  return edge->is_phony() ? 0 : 1;
+// Historical timings can prioritize the long compile/link chain on repeated
+// builds. Preserve Ninja's equal-weight policy unless explicitly enabled.
+// Bound untrusted/corrupt log durations so they cannot dominate indefinitely.
+int64_t EdgeWeightHeuristic(Edge *edge, bool use_previous_times) {
+  if (edge->is_phony())
+    return 0;
+  if (use_previous_times && edge->prev_elapsed_time_millis > 0)
+    return std::min<int64_t>(edge->prev_elapsed_time_millis, 3600000);
+  return 1;
 }
 
 }  // namespace
@@ -538,9 +544,14 @@ void Plan::ComputeCriticalPath() {
 
   const auto& sorted_edges = topo_sort.result();
 
-  // First, reset all weights to 1.
+  // Read the opt-in once, not once per edge in a large LLVM build graph.
+  const char* timed = getenv("NINJA_CRITICAL_PATH_TIMES");
+  const bool use_previous_times = timed && strcmp(timed, "1") == 0;
+
+  // Initialize each path with the cost of its own edge.
   for (Edge* edge : sorted_edges)
-    edge->set_critical_path_weight(EdgeWeightHeuristic(edge));
+    edge->set_critical_path_weight(
+        EdgeWeightHeuristic(edge, use_previous_times));
 
   // Second propagate / increment weights from
   // children to parents. Scan the list
@@ -556,7 +567,8 @@ void Plan::ComputeCriticalPath() {
         continue;
 
       int64_t producer_weight = producer->critical_path_weight();
-      int64_t candidate_weight = edge_weight + EdgeWeightHeuristic(producer);
+      int64_t candidate_weight = edge_weight +
+        EdgeWeightHeuristic(producer, use_previous_times);
       if (candidate_weight > producer_weight)
         producer->set_critical_path_weight(candidate_weight);
     }
