@@ -78,19 +78,29 @@ struct Stopwatch {
   uint64_t NowRaw() const;
 };
 
-/// The primary interface to metrics.  Use METRIC_RECORD("foobar") at the top
-/// of a function to get timing stats recorded for each call of the function.
-#define METRIC_RECORD(name)                                             \
-  static Metric* metrics_h_metric =                                     \
-      g_metrics ? g_metrics->NewMetric(name) : NULL;                    \
-  ScopedMetric metrics_h_scoped(metrics_h_metric);
+/// The primary interface to metrics. Each invocation expands to exactly one
+/// declaration with a unique identifier, so multiple records in one scope (or
+/// on one source line) do not collide. The caller supplies the semicolon.
+///
+/// A lambda keeps the per-call-site Metric* static and preserves its existing
+/// one-time, thread-safe initialization without introducing names into the
+/// calling scope. The scoped timer still runs until that scope exits.
+#define NINJA_METRIC_JOIN_IMPL(a, b) a##b
+#define NINJA_METRIC_JOIN(a, b) NINJA_METRIC_JOIN_IMPL(a, b)
+#define NINJA_METRIC_RECORD_IMPL(metric_name, enabled, id)                   \
+  ScopedMetric NINJA_METRIC_JOIN(ninja_scoped_metric_, id)([&]() -> Metric* { \
+    static Metric* metric =                                                \
+        g_metrics ? g_metrics->NewMetric(metric_name) : NULL;              \
+    return (enabled) ? metric : NULL;                                       \
+  }())
 
-/// A variant of METRIC_RECORD that doesn't record anything if |condition|
-/// is false.
-#define METRIC_RECORD_IF(name, condition)            \
-  static Metric* metrics_h_metric =                  \
-      g_metrics ? g_metrics->NewMetric(name) : NULL; \
-  ScopedMetric metrics_h_scoped((condition) ? metrics_h_metric : NULL);
+/// Record the elapsed time spent in this scope.
+#define METRIC_RECORD(name) NINJA_METRIC_RECORD_IMPL(name, true, __COUNTER__)
+
+/// Record elapsed time only when |condition| is true. The expression is
+/// evaluated once, after the call site's metric has been initialized.
+#define METRIC_RECORD_IF(name, condition) \
+  NINJA_METRIC_RECORD_IMPL(name, condition, __COUNTER__)
 
 extern Metrics* g_metrics;
 
