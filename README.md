@@ -67,6 +67,26 @@ building, run:
 build-cmake/ninja_test
 ```
 
+## WHP incremental-build scheduling
+
+The WHP fork supports an opt-in scheduler policy for repeated builds:
+
+```sh
+NINJA_CRITICAL_PATH_TIMES=1 ninja -C build
+```
+
+When an existing `.ninja_log` contains durations, Ninja weights the
+critical-path queue by the previous elapsed time of each command instead of
+treating all non-phony commands as equal. Missing or zero durations use a
+one-unit fallback; each recorded duration is capped at one hour to avoid
+unreasonable priority from bad history. Phony edges remain zero-cost.
+This changes *scheduling only*: dependencies, command arguments, job counts,
+jobserver tokens, and output formats are unchanged.
+
+The default (environment variable unset or `0`) retains the ordinary
+edge-count critical-path heuristic. This policy has no effect on a clean build
+without historical timings, and it is not a guaranteed wall-clock improvement.
+
 ## Generating documentation
 
 ### Ninja Manual
