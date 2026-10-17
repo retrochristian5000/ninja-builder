@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <climits>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "build_log.h"
 #include "build_result.h"
