@@ -14,6 +14,37 @@
 
 #include <gtest/gtest.h>
 
+#include "metrics.h"
+
+// Two metric sites must not introduce the same local variable, even when the
+// invocations occupy the same source line.
+TEST(MetricMacroTest, MultipleSitesInOneScope) {
+  METRIC_RECORD("first"); METRIC_RECORD("second");
+  METRIC_RECORD_IF("conditional", true);
+}
+
+// The macros must expand to a single declaration without swallowing 'else'.
+// The condition must be evaluated exactly once.
+TEST(MetricMacroTest, ConditionalControlFlow) {
+  int evaluations = 0;
+  METRIC_RECORD_IF("checked", ++evaluations == 1);
+  EXPECT_EQ(1, evaluations);
+
+  int alternate = 0;
+  if (true)
+    METRIC_RECORD("selected");
+  else
+    ++alternate;
+
+  if (false)
+    METRIC_RECORD_IF("unselected", ++evaluations == 2);
+  else
+    ++alternate;
+
+  EXPECT_EQ(1, evaluations);
+  EXPECT_EQ(1, alternate);
+}
+
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
