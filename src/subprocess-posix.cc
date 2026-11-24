@@ -266,8 +266,13 @@ bool Subprocess::Start(SubprocessSet* set, const string& command) {
 }
 
 void Subprocess::OnPipeReady() {
-  char buf[4 << 10];
-  ssize_t len = read(fd_, buf, sizeof(buf));
+  // Drain larger bursts of compiler diagnostics per readiness event.
+  // Keep a single read per event so other subprocesses remain responsive.
+  char buf[16 << 10];
+  ssize_t len;
+  do {
+    len = read(fd_, buf, sizeof(buf));
+  } while (len < 0 && errno == EINTR);
   if (len > 0) {
     buf_.append(buf, len);
   } else {
@@ -440,6 +445,7 @@ Subprocess *SubprocessSet::Add(const string& command, bool use_console) {
 #ifdef USE_PPOLL
 SubprocessSet::WorkResult SubprocessSet::DoWork() {
   vector<pollfd> fds;
+  fds.reserve(running_.size() + 1);
   nfds_t nfds = 0;
   WorkResult work_result = WorkResult::NoWork;
 
@@ -471,12 +477,14 @@ SubprocessSet::WorkResult SubprocessSet::DoWork() {
   interrupted_ = 0;
   s_sigchld_received = 0;
   int ret = ppoll(&fds.front(), nfds, NULL, &old_mask_);
+  const int poll_errno = ret < 0 ? errno : 0;
   // Note: This can remove console processes from the running set, but that is
   // not a problem for the pollfd set, as console processes are not part of the
   // pollfd set (they don't have a fd).
   CheckConsoleProcessTerminated(&work_result);
   if (ret == -1) {
-    if (errno != EINTR) {
+    if (poll_errno != EINTR) {
+      errno = poll_errno;
       perror("ninja: ppoll");
       return work_result;
     }
@@ -549,9 +557,11 @@ SubprocessSet::WorkResult SubprocessSet::DoWork() {
   interrupted_ = 0;
   s_sigchld_received = 0;
   int ret = pselect(nfds, (nfds > 0 ? &set : nullptr), 0, 0, 0, &old_mask_);
+  const int poll_errno = ret < 0 ? errno : 0;
   CheckConsoleProcessTerminated(&work_result);
   if (ret == -1) {
-    if (errno != EINTR) {
+    if (poll_errno != EINTR) {
+      errno = poll_errno;
       perror("ninja: pselect");
       return work_result;
     }

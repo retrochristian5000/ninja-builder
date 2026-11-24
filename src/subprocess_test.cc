@@ -107,6 +107,23 @@ TEST_F(SubprocessTest, NoSuchCommand) {
 
 #ifndef _WIN32
 
+TEST_F(SubprocessTest, LargeCombinedOutput) {
+  // Use portable shell commands; verify bytes from both output streams.
+  Subprocess* subproc = subprocs_.Add(
+      "i=0; while [ \"$i\" -lt 4096 ]; do "
+      "printf '0123456789abcdef'; printf 'FEDCBA9876543210' >&2; "
+      "i=$((i+1)); done");
+  ASSERT_NE(nullptr, subproc);
+  while (!subproc->Done())
+    subprocs_.DoWork();
+
+  ASSERT_EQ(ExitSuccess, subproc->Finish());
+  string expected;
+  for (int i = 0; i < 4096; ++i)
+    expected += "0123456789abcdefFEDCBA9876543210";
+  EXPECT_EQ(expected, subproc->GetOutput());
+}
+
 TEST_F(SubprocessTest, InterruptChild) {
   Subprocess* subproc = subprocs_.Add("kill -INT $$");
   ASSERT_NE((Subprocess *) 0, subproc);
