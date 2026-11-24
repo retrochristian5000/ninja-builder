@@ -23,6 +23,7 @@
 #include <cinttypes>
 #endif
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdlib.h>
 
@@ -67,6 +68,18 @@ StatusPrinter::StatusPrinter(const BuildConfig& config)
   // Don't do anything fancy in verbose mode.
   if (config_.verbosity != BuildConfig::NORMAL)
     printer_.set_smart_terminal(false);
+
+  // Throttle routine progress only; explicit verbose and quiet modes retain
+  // their existing behavior. Zero (the standalone default) disables it.
+  if (const char* interval = getenv("NINJA_STATUS_INTERVAL_MS")) {
+    char* end = nullptr;
+    errno = 0;
+    long value = strtol(interval, &end, 10);
+    if (errno == ERANGE || end == interval || *end || value < 0 ||
+        value > 60000)
+      Fatal("invalid NINJA_STATUS_INTERVAL_MS: expected 0 to 60000");
+    status_interval_millis_ = value;
+  }
 
   if (config.progress_status_format) {
     // --status uses Ninja-style variable expansion ($var / ${var}).
@@ -121,7 +134,7 @@ void StatusPrinter::BuildEdgeStarted(const Edge* edge,
   time_millis_ = start_time_millis;
 
   if (edge->use_console() || printer_.is_smart_terminal())
-    PrintStatus(edge, start_time_millis);
+    PrintStatus(edge, start_time_millis, edge->use_console());
 
   if (edge->use_console())
     printer_.SetConsoleLocked(true);
@@ -230,7 +243,9 @@ void StatusPrinter::BuildEdgeFinished(Edge* edge, int64_t start_time_millis,
     return;
 
   if (!edge->use_console())
-    PrintStatus(edge, end_time_millis);
+    PrintStatus(edge, end_time_millis,
+                exit_code != ExitSuccess || !output.empty() ||
+                    finished_edges_ == total_edges_);
 
   --running_edges_;
 
@@ -286,6 +301,7 @@ void StatusPrinter::BuildStarted() {
   started_edges_ = 0;
   finished_edges_ = 0;
   running_edges_ = 0;
+  last_status_millis_ = -1;
 }
 
 void StatusPrinter::BuildFinished() {
@@ -510,7 +526,8 @@ string StatusPrinter::FormatStatusVariable(StringPiece name) const {
   return "";
 }
 
-void StatusPrinter::PrintStatus(const Edge* edge, int64_t time_millis) {
+void StatusPrinter::PrintStatus(const Edge* edge, int64_t time_millis,
+                                bool force) {
   if (explanations_) {
     explanations_->ExplainEdge(edge);
   }
@@ -519,6 +536,12 @@ void StatusPrinter::PrintStatus(const Edge* edge, int64_t time_millis) {
       || config_.verbosity == BuildConfig::NO_STATUS_UPDATE)
     return;
 
+  if (config_.verbosity == BuildConfig::NORMAL && !force &&
+      status_interval_millis_ > 0 && last_status_millis_ >= 0 &&
+      time_millis - last_status_millis_ < status_interval_millis_)
+    return;
+
+  last_status_millis_ = time_millis;
   RecalculateProgressPrediction();
 
   bool force_full_command = config_.verbosity == BuildConfig::VERBOSE;

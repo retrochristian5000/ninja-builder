@@ -64,7 +64,10 @@ struct StatusPrinter : Status {
   }
 
  private:
-  void PrintStatus(const Edge* edge, int64_t time_millis);
+  void PrintStatus(const Edge* edge, int64_t time_millis, bool force);
+
+  int64_t status_interval_millis_ = 0;
+  int64_t last_status_millis_ = -1;
 
   const BuildConfig& config_;
 
