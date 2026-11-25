@@ -34,6 +34,21 @@ jobs:
       run: ./ninja_test
       working-directory: build/Release
 
+    - name: Verify Darwin automatic parallelism
+      shell: bash
+      working-directory: build/Release
+      run: |
+        active="$(sysctl -n hw.activecpu)"
+        tiers="$(sysctl -n hw.nperflevels 2>/dev/null || printf '1')"
+        if [[ "$tiers" -gt 1 ]]; then
+          output="$(env -u NINJA_AUTO_JOBS ./ninja -h 2>&1 || true)"
+          grep -Fq "[default=$active on this system]" <<< "$output"
+        fi
+        output="$(NINJA_AUTO_JOBS=1 ./ninja -h 2>&1 || true)"
+        grep -Fq '[default=1 on this system]' <<< "$output"
+        output="$(NINJA_AUTO_JOBS=1 ./ninja -j 3 -h 2>&1 || true)"
+        grep -Fq '[default=3 on this system]' <<< "$output"
+
     - name: Create ninja archive
       shell: bash
       run: |

@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -811,6 +812,19 @@ int ParseCPUFromCGroup() {
 }
 #endif
 
+#if defined(__APPLE__)
+namespace {
+int ReadPositiveSysctlInt(const char* name) {
+  int value = 0;
+  size_t size = sizeof(value);
+  if (sysctlbyname(name, &value, &size, nullptr, 0) == 0 &&
+      size == sizeof(value) && value > 0)
+    return value;
+  return 0;
+}
+}  // namespace
+#endif
+
 int GetProcessorCount() {
 #ifdef _WIN32
   DWORD cpuCount = 0;
@@ -857,6 +871,13 @@ int GetProcessorCount() {
     }
   }
   return cpuCount;
+#elif defined(__APPLE__)
+  // hw.activecpu reports enabled logical cores, not the advertised maximum.
+  int active = ReadPositiveSysctlInt("hw.activecpu");
+  if (active > 0)
+    return active;
+  long online = sysconf(_SC_NPROCESSORS_ONLN);
+  return online > 0 && online <= INT_MAX ? static_cast<int>(online) : 0;
 #else
   int cgroupCount = -1;
   int schedCount = -1;
@@ -883,6 +904,24 @@ int GetProcessorCount() {
   if (cgroupCount < 0 && schedCount < 0)
     return static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
   return std::max(cgroupCount, schedCount);
+#endif
+}
+
+int GetDefaultJobCount(int processors, bool heterogeneous) {
+  if (processors <= 0)
+    return 2;
+  if (heterogeneous)
+    return processors;
+  if (processors <= 2)
+    return processors + 1;
+  return processors > INT_MAX - 2 ? INT_MAX : processors + 2;
+}
+
+bool HasHeterogeneousProcessors() {
+#if defined(__APPLE__)
+  return ReadPositiveSysctlInt("hw.nperflevels") > 1;
+#else
+  return false;
 #endif
 }
 

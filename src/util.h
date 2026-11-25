@@ -98,6 +98,12 @@ std::string StripAnsiEscapeCodes(const std::string& in);
 /// guess for how many jobs to run in parallel.  @return 0 on error.
 int GetProcessorCount();
 
+/// Whether the host exposes multiple CPU performance tiers.
+bool HasHeterogeneousProcessors();
+
+/// Default job count before applying explicit user or bootstrap limits.
+int GetDefaultJobCount(int processors, bool heterogeneous);
+
 /// @return the load average of the machine. A negative value is returned
 /// on error.
 double GetLoadAverage();

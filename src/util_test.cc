@@ -14,6 +14,8 @@
 
 #include "util.h"
 
+#include <limits.h>
+
 #include "test.h"
 
 using namespace std;
@@ -26,6 +28,18 @@ void CanonicalizePath(string* path) {
 }
 
 }  // namespace
+
+TEST(ProcessorParallelism, Defaults) {
+  EXPECT_EQ(2, GetDefaultJobCount(-1, false));
+  EXPECT_EQ(2, GetDefaultJobCount(0, true));
+  EXPECT_EQ(2, GetDefaultJobCount(1, false));
+  EXPECT_EQ(3, GetDefaultJobCount(2, false));
+  EXPECT_EQ(8, GetDefaultJobCount(6, false));
+  EXPECT_EQ(1, GetDefaultJobCount(1, true));
+  EXPECT_EQ(6, GetDefaultJobCount(6, true));
+  EXPECT_EQ(10, GetDefaultJobCount(10, true));
+  EXPECT_EQ(INT_MAX, GetDefaultJobCount(INT_MAX, false));
+}
 
 TEST(CanonicalizePath, PathSamples) {
   string path;
