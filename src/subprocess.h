@@ -50,6 +50,14 @@ struct Subprocess {
 
   const std::string& GetOutput() const;
 
+  /// Transfer captured output after completion without copying its storage.
+  /// The subprocess no longer retains the output after this call.
+  std::string TakeOutput() {
+    std::string output;
+    output.swap(buf_);
+    return output;
+  }
+
  private:
   Subprocess(bool use_console);
   bool Start(struct SubprocessSet* set, const std::string& command);
@@ -118,8 +126,10 @@ struct SubprocessSet {
   Subprocess* Add(const std::string& command, bool use_console = false);
   WorkResult DoWork();
 
+  /// Remove a completed subprocess and transfer ownership to the caller.
   Subprocess* NextFinished();
   bool HasFinished() const { return !finished_.empty(); }
+  /// Clean up running and completed subprocesses still owned by this set.
   void Clear();
 
   std::vector<Subprocess*> running_;

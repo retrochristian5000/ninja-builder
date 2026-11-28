@@ -122,6 +122,12 @@ TEST_F(SubprocessTest, LargeCombinedOutput) {
   for (int i = 0; i < 4096; ++i)
     expected += "0123456789abcdefFEDCBA9876543210";
   EXPECT_EQ(expected, subproc->GetOutput());
+  const char* storage = subproc->GetOutput().data();
+  string output = subproc->TakeOutput();
+  EXPECT_EQ(expected, output);
+  EXPECT_EQ(static_cast<const void*>(storage),
+            static_cast<const void*>(output.data()));
+  EXPECT_TRUE(subproc->GetOutput().empty());
 }
 
 TEST_F(SubprocessTest, InterruptChild) {
@@ -226,6 +232,34 @@ TEST_F(SubprocessTest, SetWithSingle) {
   ASSERT_EQ(1u, subprocs_.finished_.size());
 }
 
+TEST_F(SubprocessTest, ClearFinishedAndReuse) {
+  Subprocess* first = subprocs_.Add(kSimpleCommand);
+  ASSERT_NE(nullptr, first);
+  while (!first->Done())
+    subprocs_.DoWork();
+  ASSERT_EQ(1u, subprocs_.finished_.size());
+  ASSERT_NE("", first->GetOutput());
+
+  subprocs_.Clear();
+  EXPECT_TRUE(subprocs_.running_.empty());
+  EXPECT_FALSE(subprocs_.HasFinished());
+  EXPECT_EQ(nullptr, subprocs_.NextFinished());
+  subprocs_.Clear();  // Cleanup must also be safe when repeated.
+
+  Subprocess* second = subprocs_.Add(kSimpleCommand);
+  ASSERT_NE(nullptr, second);
+  while (!second->Done())
+    subprocs_.DoWork();
+  Subprocess* completed = subprocs_.NextFinished();
+  ASSERT_EQ(second, completed);
+  EXPECT_EQ(ExitSuccess, completed->Finish());
+  string output = completed->TakeOutput();
+  EXPECT_NE("", output);
+  EXPECT_TRUE(completed->GetOutput().empty());
+  delete completed;
+  EXPECT_FALSE(subprocs_.HasFinished());
+}
+
 TEST_F(SubprocessTest, SetWithMulti) {
   Subprocess* processes[3];
   const char* kCommands[3] = {
@@ -262,8 +296,10 @@ TEST_F(SubprocessTest, SetWithMulti) {
   for (int i = 0; i < 3; ++i) {
     ASSERT_EQ(ExitSuccess, processes[i]->Finish());
     ASSERT_NE("", processes[i]->GetOutput());
-    delete processes[i];
   }
+  // The set owns these pointers until NextFinished() transfers ownership.
+  subprocs_.Clear();
+  EXPECT_FALSE(subprocs_.HasFinished());
 }
 
 #if defined(USE_PPOLL)

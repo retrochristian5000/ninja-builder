@@ -620,4 +620,8 @@ void SubprocessSet::Clear() {
        i != running_.end(); ++i)
     delete *i;
   running_.clear();
+  // Completed children may still be queued when a different command fails
+  // or the build is interrupted. They remain owned by the set until popped.
+  while (Subprocess* subproc = NextFinished())
+    delete subproc;
 }

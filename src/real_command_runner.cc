@@ -55,6 +55,7 @@ std::vector<Edge*> RealCommandRunner::GetActiveEdges() {
 void RealCommandRunner::Abort() {
   ClearJobTokens();
   subprocs_.Clear();
+  subproc_to_edge_.clear();
 }
 
 size_t RealCommandRunner::CanRunMore() const {
@@ -133,7 +134,7 @@ BuildResult RealCommandRunner::WaitForCommandOrJobserverToken(
     {
       Subprocess* subproc = subprocs_.NextFinished();
       ExitStatus status = subproc->Finish();
-      std::string output = subproc->GetOutput();
+      std::string output = subproc->TakeOutput();
       std::map<const Subprocess*, Edge*>::iterator e =
           subproc_to_edge_.find(subproc);
       Edge* edge = e->second;
